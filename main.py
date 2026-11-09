@@ -242,7 +242,27 @@ def _build_overview(metadata) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def save_results(results, issues, output_path, metadata=None):
+# columns of the Results sheet holding values observed in the data
+_DETAIL_COLUMNS = ['tabulation']
+
+
+def nodetails_path(output_path):
+    """pii_checker_results.xlsx -> pii_checker_results-nodetails.xlsx"""
+    stem, ext = os.path.splitext(output_path)
+    return f"{stem}-nodetails{ext}"
+
+
+def save_results(results, issues, output_path, metadata=None, strip_details=False):
+    """Writes the results workbook. With strip_details, also writes a copy
+    without the observed data values (see nodetails_path) that can be shared
+    where the data themselves must not go."""
+    _write_results(results, issues, output_path, metadata)
+    if strip_details:
+        stripped = [{k: v for k, v in r.items() if k not in _DETAIL_COLUMNS} for r in results]
+        _write_results(stripped, issues, nodetails_path(output_path), metadata)
+
+
+def _write_results(results, issues, output_path, metadata):
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
         if metadata:
             _build_overview(metadata).to_excel(writer, sheet_name='Overview', index=False)
@@ -260,7 +280,8 @@ def save_results(results, issues, output_path, metadata=None):
 
 
 def run_package(folder_path, output_path, central_output_path=None, temp_base=None,
-                provider=DEFAULT_PROVIDER, model=DEFAULT_MODEL, tracker=None, track_throughput=False):
+                provider=DEFAULT_PROVIDER, model=DEFAULT_MODEL, tracker=None, track_throughput=False,
+                strip_details=False):
     """
     Processes a single package folder without modifying it.
     Archives are extracted directly into a temp dir; non-archive files are copied there.
@@ -269,6 +290,8 @@ def run_package(folder_path, output_path, central_output_path=None, temp_base=No
                        Excel file next to output_path. Off by default.
     tracker: optional ThroughputTracker to log columns/minute into (used by run_folder to
              share one tracker across packages); overrides track_throughput.
+    strip_details: if True, every save also writes a copy without the observed
+                   values (pii_checker_results-nodetails.xlsx).
     Returns a summary dict with counts.
     """
 
@@ -481,7 +504,8 @@ def run_package(folder_path, output_path, central_output_path=None, temp_base=No
 
             if results:
                 _update_metadata(files, n_data_files, n_duplicates, results)
-                save_results(results, issue_collector.issues, output_path, metadata=metadata)
+                save_results(results, issue_collector.issues, output_path, metadata=metadata,
+                             strip_details=strip_details)
 
         # --- Step 8: second pass — copy results for duplicates ---
         for file_path in files:
@@ -502,9 +526,11 @@ def run_package(folder_path, output_path, central_output_path=None, temp_base=No
 
         # --- Step 9: final save ---
         _finalize_metadata(files, n_data_files, n_duplicates, results)
-        save_results(results, issue_collector.issues, output_path, metadata=metadata)
+        save_results(results, issue_collector.issues, output_path, metadata=metadata,
+                     strip_details=strip_details)
         if central_output_path:
-            save_results(results, issue_collector.issues, central_output_path, metadata=metadata)
+            save_results(results, issue_collector.issues, central_output_path, metadata=metadata,
+                         strip_details=strip_details)
 
         # --- build summary ---
         counts = _count_results(results, issue_collector.issues)
@@ -619,7 +645,7 @@ _OVERVIEW_COLUMNS = ['package_path', 'status', 'notes'] + _OVERVIEW_SUMMARY_COLU
 
 
 def run_folder(folder_path, provider=DEFAULT_PROVIDER, model=DEFAULT_MODEL,
-                track_throughput=False):
+                track_throughput=False, strip_details=False):
     """
     Discovers all package subfolders in folder_path, processes any row
     currently 'pending' (including one just reset from 'running'), and
@@ -714,7 +740,8 @@ def run_folder(folder_path, provider=DEFAULT_PROVIDER, model=DEFAULT_MODEL,
         logger.info("[%d/%d] Starting package: %s", i, n_pending_total, name)
         try:
             summary = run_package(package_path, output_path, temp_base=temp_base,
-                                  provider=provider, model=model, tracker=tracker)
+                                  provider=provider, model=model, tracker=tracker,
+                                  strip_details=strip_details)
 
             if summary:
                 for key, val in summary.items():

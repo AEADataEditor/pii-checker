@@ -16,6 +16,8 @@
 # --model NAME  uses NAME without prompting
 # --continue    leave the model loaded in Ollama afterwards (for a follow-up
 #               run); by default it is unloaded when the script ends
+# --strip-details  also save pii_checker_results-nodetails.xlsx, without the
+#               values observed in the data (the 'tabulation' column)
 # Without --model the LLM_MODEL from config.env is used.
 
 import argparse
@@ -116,6 +118,9 @@ def main():
                              "Default: LLM_MODEL from config.env")
     parser.add_argument("--continue", dest="keep_loaded", action="store_true",
                         help="keep the model loaded in Ollama after this run (default: unload it at the end)")
+    parser.add_argument("--strip-details", action="store_true",
+                        help="also save a copy of the results without the observed values, "
+                             "with -nodetails appended to the file name")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = parser.parse_args()
     logger.info("PII Checker %s", __version__)
@@ -139,7 +144,7 @@ def main():
         mode = '2' if args.many else '1'
 
     try:
-        _run(mode, folder, model)
+        _run(mode, folder, model, strip_details=args.strip_details)
     finally:
         # runs after a crash or Ctrl-C too — that is exactly when a model would
         # otherwise be left resident for every other user of the endpoint
@@ -147,7 +152,7 @@ def main():
             unload_ollama_model(model)
 
 
-def _run(mode, folder, model):
+def _run(mode, folder, model, strip_details=False):
     if mode == '1':
         packages = [folder]
         for i, package_folder in enumerate(packages, start=1):
@@ -163,6 +168,7 @@ def _run(mode, folder, model):
                     output_path,
                     temp_base=temp_base,
                     model=model,
+                    strip_details=strip_details,
                 )
             except Exception as e:
                 logger.error("Package failed: %s — %s", name, e, exc_info=True)
@@ -170,7 +176,7 @@ def _run(mode, folder, model):
                 _rmtree_retrying(temp_base)  # run_package already cleans up its own subdir; this catches any leftovers
             logger.info("[%d/%d] Finished package: %s", i, len(packages), name)
     else:
-        run_folder(folder, model=model)
+        run_folder(folder, model=model, strip_details=strip_details)
 
 
 if __name__ == "__main__":
