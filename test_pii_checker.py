@@ -4,6 +4,7 @@
 # Run with: python -m pytest -q
 
 import builtins
+import os
 
 from llm_client import save_model_to_config
 from interface import _parse_model_choice
@@ -133,6 +134,30 @@ def test_save_results_writes_metadata_sheet(tmp_path):
     assert overview['Flagged: direct PII'] == 2
     assert 'Tool version' not in overview  # version lives in Metadata only
     assert overview['Run finished'] == 'not finished (partial results)'  # no 'ended' yet
+
+
+def test_save_results_strip_details_writes_copy_without_values(tmp_path):
+    import pandas as pd
+    from main import save_results, nodetails_path
+    out = tmp_path / "pii_checker_results.xlsx"
+    rows = [{'file': 'a.csv', 'col_name': 'name', 'evaluation': 'direct_pii',
+             'reasoning': 'names', 'tabulation': 'Jane Doe (1)'}]
+    save_results(rows, [], str(out), metadata={'package_name': 'pkg1'}, strip_details=True)
+    assert nodetails_path(str(out)) == str(tmp_path / "pii_checker_results-nodetails.xlsx")
+    full = pd.read_excel(out, sheet_name='Results')
+    stripped = pd.read_excel(nodetails_path(str(out)), sheet_name=None)
+    assert full['tabulation'][0] == 'Jane Doe (1)'
+    assert 'tabulation' not in stripped['Results'].columns
+    assert stripped['Results']['evaluation'][0] == 'direct_pii'
+    assert list(stripped) == ['Overview', 'Results', 'Metadata']
+    assert rows[0]['tabulation'] == 'Jane Doe (1)'  # caller's rows untouched
+
+
+def test_save_results_without_strip_details_writes_one_file(tmp_path):
+    from main import save_results, nodetails_path
+    out = tmp_path / "pii_checker_results.xlsx"
+    save_results([{'file': 'a.csv', 'tabulation': 'x'}], [], str(out))
+    assert out.exists() and not os.path.exists(nodetails_path(str(out)))
 
 
 def test_pattern_checks_accept_integer_column_names():
